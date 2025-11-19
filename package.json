@@ -1,7 +1,13 @@
 {
-    "name": "bybit-micro-api",
+    "name": "bybit-ticker-fly",
     "version": "1.0.0",
     "private": true,
-    "type": "module"
-  }
-  
+    "type": "module",
+    "main": "server.mjs",
+    "scripts": {
+        "start": "node server.mjs"
+    },
+    "dependencies": {
+        "express": "^4.19.2"
+    }
+}
