@@ -93,13 +93,17 @@ Fetch historical candlestick (kline) data with parsed OHLCV format.
 **Query Parameters:**
 - `symbol` (required) - Trading pair symbol
 - `category` (optional, default: `linear`) - Market category (`spot`, `linear`, `inverse`)
-- `interval` (optional, default: `1`) - Time interval in minutes (`1`, `5`, `15`, `60`, `D`, `W`, `M`)
+- `interval` (optional, default: `240`) - Time interval in minutes (`1`, `5`, `15`, `60`, `240`, `D`, `W`, `M`)
 - `limit` (optional, default: `10`) - Number of candles to fetch (max: 200)
 - `start` (optional) - Start timestamp in milliseconds
 - `end` (optional) - End timestamp in milliseconds
 
 **Example Request:**
 ```bash
+# Default 4-hour interval
+curl "http://localhost:8080/api/bybit/candles?symbol=BTCUSDT&limit=5"
+
+# Or specify a different interval (e.g., 1-hour)
 curl "http://localhost:8080/api/bybit/candles?symbol=BTCUSDT&interval=60&limit=5"
 ```
 
@@ -109,7 +113,7 @@ curl "http://localhost:8080/api/bybit/candles?symbol=BTCUSDT&interval=60&limit=5
   "meta": {
     "symbol": "BTCUSDT",
     "category": "linear",
-    "interval": "60",
+    "interval": "240",
     "limit": "5"
   },
   "retCode": 0,
@@ -117,13 +121,13 @@ curl "http://localhost:8080/api/bybit/candles?symbol=BTCUSDT&interval=60&limit=5
   "candles": [
     {
       "startTime": 1732093200000,
-      "startTimeISO": "2024-11-20T10:00:00.000Z",
+      "startTimeISO": "2024-11-20T08:00:00.000Z",
       "open": 43200.50,
       "high": 43350.75,
       "low": 43150.25,
       "close": 43250.00,
-      "volume": 125.45,
-      "turnover": 5428750.50
+      "volume": 1254.45,
+      "turnover": 54287500.50
     }
   ],
   "time": 1732095123456
@@ -144,7 +148,7 @@ Simulate stop-loss hits based on historical price data. Automatically calculates
 - `entryDate` (required) - Entry date in ISO format (e.g., `2025-11-10T14:52:00Z`)
 - `direction` (optional, default: `LONG`) - Position direction (`LONG` or `SHORT`)
 - `category` (optional, default: `linear`) - Market category
-- `interval` (optional, default: `1`) - Candlestick interval in minutes
+- `interval` (optional, default: `240`) - Candlestick interval in minutes (default: 4 hours)
 - `stopPercents` (optional, default: `10,15,20`) - Stop-loss percentages (comma-separated)
 - `includeCandles` (optional, default: `false`) - Include full candle data in response
 
@@ -157,7 +161,8 @@ Simulate stop-loss hits based on historical price data. Automatically calculates
 
 **Example Request (LONG position):**
 ```bash
-curl "http://localhost:8080/api/bybit/stop-sim?symbol=BTCUSDT&direction=LONG&entryPrice=43000&entryDate=2024-11-19T10:00:00Z&interval=60&stopPercents=5,10,15"
+# Using default 4-hour interval
+curl "http://localhost:8080/api/bybit/stop-sim?symbol=BTCUSDT&direction=LONG&entryPrice=43000&entryDate=2024-11-19T10:00:00Z&stopPercents=5,10,15"
 ```
 
 **Example Response:**
@@ -166,15 +171,15 @@ curl "http://localhost:8080/api/bybit/stop-sim?symbol=BTCUSDT&direction=LONG&ent
   "meta": {
     "symbol": "BTCUSDT",
     "category": "linear",
-    "interval": "60",
+    "interval": "240",
     "entryDate": "2024-11-19T10:00:00Z",
     "entryTimestamp": 1732010400000,
     "direction": "LONG",
     "entryPrice": 43000,
     "stopPercents": [5, 10, 15],
-    "computedLimit": 24,
-    "cappedLimit": 24,
-    "actualCandlesReceived": 24
+    "computedLimit": 7,
+    "cappedLimit": 7,
+    "actualCandlesReceived": 7
   },
   "retCode": 0,
   "retMsg": "OK",
@@ -209,7 +214,8 @@ curl "http://localhost:8080/api/bybit/stop-sim?symbol=BTCUSDT&direction=LONG&ent
 
 **Example Request (SHORT position):**
 ```bash
-curl "http://localhost:8080/api/bybit/stop-sim?symbol=CROSSUSDT&direction=SHORT&entryPrice=0.1257&entryDate=2024-11-10T14:52:00Z&interval=1&stopPercents=10,15,20"
+# Using 1-minute interval for more granular data
+curl "http://localhost:8080/api/bybit/stop-sim?symbol=CROSSUSDT&direction=SHORT&entryPrice=0.1257&entryDate=2024-11-20T14:52:00Z&interval=1&stopPercents=10,15,20"
 ```
 
 **SHORT Position Explanation:**
@@ -248,12 +254,12 @@ curl "http://localhost:8080/api/bybit/stop-sim?symbol=CROSSUSDT&direction=SHORT&
 
 ## Interval Options
 
-Available intervals for candlestick data:
+Available intervals for candlestick data (default is `240` - 4 hours):
 
 | Interval | Description |
 |----------|-------------|
 | `1`, `3`, `5`, `15`, `30` | Minutes |
-| `60`, `120`, `240`, `360`, `720` | Minutes (1h, 2h, 4h, 6h, 12h) |
+| `60`, `120`, `240`, `360`, `720` | Minutes (1h, 2h, **4h - default**, 6h, 12h) |
 | `D` | Daily |
 | `W` | Weekly |
 | `M` | Monthly |
@@ -293,8 +299,8 @@ curl "http://localhost:8080/api/bybit/stop-sim?symbol=BTCUSDT&entryPrice=43000&e
 ### Risk Management Analysis
 Analyze historical volatility to set appropriate stop-losses:
 ```bash
-# Get 1-hour candles to analyze price swings
-curl "http://localhost:8080/api/bybit/candles?symbol=ETHUSDT&interval=60&limit=24"
+# Get 4-hour candles to analyze price swings (default interval)
+curl "http://localhost:8080/api/bybit/candles?symbol=ETHUSDT&limit=24"
 ```
 
 ### Real-Time Monitoring
