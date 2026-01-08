@@ -1,9 +1,13 @@
-// server.mjs
+import 'dotenv/config';
 import express from "express";
 import { getCandles, simulateStops } from "./priceService.mjs";
+import tradingRouter from "./tradingRoutes.mjs";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+app.use(express.json());
+app.use("/api/trade", tradingRouter);
 
 /**
  * Ticker helper – tenta em várias categorias (spot, linear, inverse)
