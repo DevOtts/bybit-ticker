@@ -188,3 +188,11 @@ curl -X POST "http://localhost:8080/api/trade/close" \
 `GET /api/bybit/stop-sim`
 Simulates historical stop-loss hits. Useful for backtesting risk parameters.
 (See legacy docs for full params).
+
+---
+
+## About
+
+This API Bundle was created by **Devotts** with the intention to help Devotts with his own trades automations.
+
+Feel free to contribute and reach out with questions or suggestions at [github.com/devotts](https://github.com/devotts).

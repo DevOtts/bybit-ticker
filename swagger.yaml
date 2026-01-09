@@ -1,7 +1,11 @@
 openapi: 3.0.0
 info:
   title: Bybit Ticker & Trading API
-  description: API for fetching crypto market data and executing automated trades on Bybit.
+  description: |
+    API for fetching crypto market data and executing automated trades on Bybit.
+    
+    Created by **Devotts** to assist with personal trade automations. 
+    Feel free to contribute: [github.com/devotts](https://github.com/devotts)
   version: 1.0.0
 servers:
   - url: http://localhost:8080
