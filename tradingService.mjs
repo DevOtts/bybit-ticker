@@ -336,9 +336,10 @@ function roundToStep(quantity, qtyStep) {
 
 /**
  * Opens a position with Enhanced Logic (8 Steps)
+ * Default StopLoss= 20%
  * @param {object} params - { symbol, direction, leverage, margin }
  */
-export async function openPosition({ symbol, direction, leverage = 20, margin }) {
+export async function openPosition({ symbol, direction, leverage = 20, margin, slDist = 0.2 }) {
     // STEP 0: Check Wallet Balance
     // We strictly use USDT for settlements in Linear perps.
     // We add a conservative 1% buffer for opening fees/market slippage.
@@ -393,9 +394,8 @@ export async function openPosition({ symbol, direction, leverage = 20, margin })
     const filledOrder = await waitForFill(marketOrderId, symbol, 5000);
     const actualEntryPrice = parseFloat(filledOrder.avgPrice);
 
-    // STEP 6: Calculate and set stop loss (1% below entry for LONG)
-    // ROE 20% at 20x => 1% price distance
-    const slDist = 0.01;
+    // STEP 6: Calculate and set stop loss (using provided slDist)
+    // slDist should be a decimal (e.g., 0.01 for 1%)
     const slPriceRaw = dir === 'LONG'
         ? actualEntryPrice * (1 - slDist)
         : actualEntryPrice * (1 + slDist);

@@ -50,7 +50,19 @@ router.get('/market/:symbol', async (req, res) => {
 // POST /api/trade/open
 router.post('/open', async (req, res) => {
     try {
-        const result = await tradingService.openPosition(req.body);
+        // Support slDist (decimal) or slPercentage (decimal)
+        const { symbol, direction, margin, leverage, slDist, slPercentage } = req.body;
+
+        // Robust fallback: slDist -> slPercentage -> 0.01 (default in service)
+        const finalSlDist = slDist || slPercentage;
+
+        const result = await tradingService.openPosition({
+            symbol,
+            direction,
+            margin,
+            leverage,
+            slDist: finalSlDist
+        });
         res.status(200).json(result);
     } catch (err) {
         console.error('Open position error:', err);
