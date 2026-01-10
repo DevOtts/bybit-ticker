@@ -1,9 +1,20 @@
-// server.mjs
+import 'dotenv/config';
 import express from "express";
+import swaggerUi from 'swagger-ui-express';
+import YAML from 'yamljs';
 import { getCandles, simulateStops } from "./priceService.mjs";
+import tradingRouter from "./tradingRoutes.mjs";
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+
+app.use(express.json());
+
+// Swagger UI
+const swaggerDocument = YAML.load('./swagger.yaml');
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
+app.use("/api/trade", tradingRouter);
 
 /**
  * Ticker helper – tenta em várias categorias (spot, linear, inverse)
@@ -139,7 +150,7 @@ app.get("/api/bybit/candles", async (req, res) => {
     const {
         symbol,
         category = "linear",
-        interval = "1",
+        interval = "240", // 4 hours
         start,
         end,
         limit = "10",
@@ -202,7 +213,7 @@ app.get("/api/bybit/candles", async (req, res) => {
 
 // === 3) Stop-loss simulation endpoint ===
 // Example:
-// /api/bybit/stop-sim?symbol=CROSSUSDT&direction=SHORT&entryPrice=0.1257&entryDate=2025-01-10T14:52:00Z&interval=1&stopPercents=10,15,20
+// /api/bybit/stop-sim?symbol=CROSSUSDT&direction=SHORT&entryPrice=0.1257&entryDate=2025-01-10T14:52:00Z&interval=240&stopPercents=10,15,20
 app.get("/api/bybit/stop-sim", async (req, res) => {
     const {
         symbol,
@@ -210,7 +221,7 @@ app.get("/api/bybit/stop-sim", async (req, res) => {
         entryPrice,
         entryDate,
         category = "linear",
-        interval = "1",
+        interval = "240",
         stopPercents = "10,15,20",
         includeCandles = "false",
     } = req.query;

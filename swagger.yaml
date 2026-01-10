@@ -1,0 +1,227 @@
+openapi: 3.0.0
+info:
+  title: Bybit Ticker & Trading API
+  description: |
+    API for fetching crypto market data and executing automated trades on Bybit.
+    
+    Created by **Devotts** to assist with personal trade automations. 
+    Feel free to contribute: [github.com/devotts](https://github.com/devotts)
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local Development Server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+
+security:
+  - {}
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Returns server status
+      responses:
+        '200':
+          description: Server is Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/bybit:
+    get:
+      summary: Get Ticker Data
+      description: Fetch real-time ticker data for a symbol.
+      parameters:
+        - in: query
+          name: symbol
+          required: true
+          schema:
+            type: string
+          description: Trading symbol (e.g. BTCUSDT)
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  retCode:
+                    type: integer
+                  result:
+                    type: object
+
+  /api/bybit/candles:
+    get:
+      summary: Get Kline (Candle) Data
+      parameters:
+        - in: query
+          name: symbol
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: interval
+          schema:
+            type: string
+            default: "240"
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+      responses:
+        '200':
+          description: Candle data
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/bybit/stop-sim:
+    get:
+      summary: Simulate Stop Loss logic
+      parameters:
+        - in: query
+          name: symbol
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: entryPrice
+          required: true
+          schema:
+            type: number
+        - in: query
+          name: entryDate
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: direction
+          schema:
+            type: string
+            enum: [LONG, SHORT]
+            default: LONG
+      responses:
+        '200':
+          description: Simulation result
+
+  # Authenticated Routes
+  /api/trade/validate/{symbol}:
+    get:
+      summary: Validate Symbol for Trading
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: symbol
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Symbol validation result
+        '401':
+          description: Unauthorized
+
+  /api/trade/market/{symbol}:
+    get:
+      summary: Get Real-time Market Data
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: symbol
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Market data with funding rates
+
+  /api/trade/position/{symbol}:
+    get:
+      summary: Get Active Position
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: symbol
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Position details and PnL
+
+  /api/trade/open:
+    post:
+      summary: Open Position (SP20 Strategy)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [symbol, direction, margin]
+              properties:
+                symbol:
+                  type: string
+                  example: BTCUSDT
+                direction:
+                  type: string
+                  enum: [LONG, SHORT]
+                margin:
+                  type: number
+                  description: Margin in USDT
+                  example: 100
+                leverage:
+                  type: number
+                  default: 20
+      responses:
+        '200':
+          description: Order execution result
+        '400':
+          description: Insufficient balance or invalid parameters
+
+  /api/trade/close:
+    post:
+      summary: Close Position
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [symbol]
+              properties:
+                symbol:
+                  type: string
+      responses:
+        '200':
+          description: Close result
