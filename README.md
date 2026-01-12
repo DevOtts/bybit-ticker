@@ -66,12 +66,21 @@ TRADING_API_SECRET=your_secret_access_token # Bearer token for accessing trading
 ```
 
 ### Deploying to Fly.io
+
+First, make sure you have it installed
+`brew install flyctl`
+
+
+
 ```bash
+# auth
+fly auth login
+
 # Set secrets via CLI
-fly secrets set BYBIT_API_KEY=x BYBIT_API_SECRET=y TRADING_API_SECRET=z
+fly secrets set BYBIT_API_KEY=x BYBIT_API_SECRET=y TRADING_API_SECRET=z  -a bybit-ticker-fly
 
 # Deploy
-fly deploy
+fly deploy -a bybit-ticker-fly
 ```
 
 ---

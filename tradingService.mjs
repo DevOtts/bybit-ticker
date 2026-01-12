@@ -225,21 +225,8 @@ export async function validateSymbol(symbol) {
     // Validate leverage
     const leverageFilter = detection.data.leverageFilter;
     const maxLeverage = parseFloat(leverageFilter.maxLeverage);
-    if (maxLeverage < 20) {
-        return {
-            success: false,
-            symbol: symbol,
-            category: 'linear',
-            canTrade: false,
-            leverage: {
-                max: maxLeverage,
-                requested: 20,
-                allowed: false
-            },
-            reason: `Symbol ${symbol} only supports up to ${maxLeverage}x leverage, but 20x is required`,
-            error: { code: 'INSUFFICIENT_LEVERAGE' }
-        };
-    }
+    // OPTION: Instead of failing, we verify and allow the caller to adapt
+    // We just return the limits here
 
     // Get current ticker for market data
     const ticker = await getTicker(symbol);
@@ -255,8 +242,7 @@ export async function validateSymbol(symbol) {
             min: parseFloat(leverageFilter.minLeverage),
             max: maxLeverage,
             step: parseFloat(leverageFilter.leverageStep),
-            requested: 20,
-            allowed: true
+            requested: 20, // Default reference
         },
         orderSizing: {
             tickSize: detection.data.priceFilter.tickSize,
@@ -347,6 +333,7 @@ export async function openPosition({ symbol, direction, leverage = 20, margin, s
     const requiredMargin = margin * 1.01;
 
     if (balance.availableToOrder < requiredMargin) {
+        // We throw 400-like error to be clearer (though here just Error)
         throw new Error(`Insufficient USDT Balance. Required: ${requiredMargin.toFixed(2)}, Available: ${balance.availableToOrder.toFixed(2)}`);
     }
 
@@ -359,23 +346,34 @@ export async function openPosition({ symbol, direction, leverage = 20, margin, s
     const dir = direction.toUpperCase();
     const entryPrice = parseFloat(validation.marketData.lastPrice);
 
+    // ADAPTIVE LEVERAGE LOGIC
+    let effectiveLeverage = leverage;
+    if (validation.leverage.max < leverage) {
+        console.warn(`[Auto-Adjust] Requested leverage ${leverage}x exceeds symbol max ${validation.leverage.max}x. Capping to ${validation.leverage.max}x.`);
+        effectiveLeverage = validation.leverage.max;
+    }
+
     // STEP 2: Calculate position size
     // Size = (Margin * Leverage) / Price
-    const positionValue = margin * leverage;
+    const positionValue = margin * effectiveLeverage;
     const rawQty = positionValue / entryPrice;
     const qtyStep = validation.orderSizing.qtyStep;
+
+    // Use floor to ensure we don't exceed margin due to rounding up
     const quantity = roundToStep(rawQty, qtyStep);
 
     // Validate min order qty
-    if (quantity < parseFloat(validation.orderSizing.minOrderQty)) {
-        throw new Error(`Calculated quantity ${quantity} is below minimum ${validation.orderSizing.minOrderQty}`);
+    const minQty = parseFloat(validation.orderSizing.minOrderQty);
+    if (quantity < minQty) {
+        throw new Error(`Calculated quantity ${quantity} is below minimum ${minQty} for ${symbol}`);
     }
 
     const qtyPrecision = getPrecision(qtyStep);
     const qtyStr = quantity.toFixed(qtyPrecision);
 
-    // STEP 3: Set leverage
-    await setLeverage(symbol, leverage);
+    // STEP 3: Set leverage (if different from current or just force set)
+    // We use the effective leverage
+    await setLeverage(symbol, effectiveLeverage);
 
     // STEP 4: Execute market order
     const side = dir === 'LONG' ? 'Buy' : 'Sell';
@@ -413,8 +411,6 @@ export async function openPosition({ symbol, direction, leverage = 20, margin, s
 
     const tpLevels = [0.02, 0.03, 0.04, 0.05];
     const rawTpDist = quantity / 4;
-    const minQty = parseFloat(validation.orderSizing.minOrderQty);
-
     // Determine workable TP size
     let tpChunk = roundToStep(rawTpDist, qtyStep);
     let validTpLevels = tpLevels;
@@ -494,15 +490,17 @@ export async function openPosition({ symbol, direction, leverage = 20, margin, s
         execution: {
             symbol,
             direction: dir,
-            leverage,
+            leverage: effectiveLeverage,
             entryPrice: actualEntryPrice,
             quantity: qtyStr,
             positionValue: positionValue.toFixed(2),
+            marginUsed: (actualEntryPrice * quantity / effectiveLeverage).toFixed(2),
             orders: {
                 market: {
                     orderId: marketOrderId,
                     status: 'Filled',
-                    avgPrice: actualEntryPrice
+                    avgPrice: actualEntryPrice,
+                    fee: filledOrder.fee || "0"
                 },
                 stopLoss: {
                     price: slPriceStr,

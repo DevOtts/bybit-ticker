@@ -3,20 +3,54 @@ import * as tradingService from './tradingService.mjs';
 
 const router = express.Router();
 
-const TRADING_SECRET = process.env.TRADING_API_SECRET;
+// Removed top-level const TRADING_SECRET = process.env.TRADING_API_SECRET; to prevent hoisting issues
+// We will access process.env.TRADING_API_SECRET dynamically inside the middleware.
 
 /**
  * Middleware to validate Authorization header
  */
 function validateAuth(req, res, next) {
+    const TRADING_SECRET = process.env.TRADING_API_SECRET;
+
     const authHeader = req.headers.authorization;
     if (!authHeader) {
+        console.warn('[Auth] Missing Authorization header');
         return res.status(401).json({ error: 'Missing Authorization header' });
     }
 
-    const [type, token] = authHeader.split(' ');
-    if (type !== 'Bearer' || token !== TRADING_SECRET) {
-        return res.status(401).json({ error: 'Invalid Bearer token' });
+    // Robust parsing: split by space, handle multiple spaces, case-insensitive
+    const parts = authHeader.trim().split(/\s+/);
+    const type = parts[0];
+    const token = parts.slice(1).join(' '); // Rejoin rest in case token has weird internal spaces (unlikely but safe)
+
+    if (!type || type.toLowerCase() !== 'bearer') {
+        const msg = `Invalid Authorization header format. Expected 'Bearer <token>'. Received type: '${type}'`;
+        console.warn(`[Auth] ${msg}`);
+        return res.status(401).json({ error: msg, receivedHeader: authHeader.substring(0, 20) + '...' });
+    }
+
+    if (!token) {
+        return res.status(401).json({ error: 'Missing token in Authorization header' });
+    }
+
+    if (!TRADING_SECRET) {
+        console.error('[Auth] Server Misconfiguration: TRADING_API_SECRET is not set');
+        return res.status(500).json({ error: 'Server authentication (TRADING_API_SECRET) is NOT configured on the server.' });
+    }
+
+    if (token !== TRADING_SECRET) {
+        // SECURITY WARNING: We are exposing debug info as requested.
+        const msg = `Invalid Bearer token.`;
+        console.warn(`[Auth] Token Mismatch. Received len=${token.length}, Expected len=${TRADING_SECRET.length}`);
+        return res.status(401).json({
+            error: msg,
+            debug: {
+                receivedLen: token.length,
+                expectedLen: TRADING_SECRET.length,
+                receivedStart: token.substring(0, 3) + '...',
+                expectedStart: TRADING_SECRET.substring(0, 3) + '...'
+            }
+        });
     }
 
     next();
