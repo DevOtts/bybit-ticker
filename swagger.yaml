@@ -128,6 +128,83 @@ paths:
           description: Simulation result
 
   # Authenticated Routes
+  /api/trade/risk-analyze:
+    post:
+      summary: Risk Analyze (V3 — ATR/SL Filter)
+      description: |
+        Analyzes trade risk before execution using ATR/SL volatility filtering and 14 technical patterns.
+        Returns a go/no-go decision. Call this **before** opening a position.
+
+        The primary filter is the ATR/SL ratio — when ATR(14) on 4H candles exceeds 2.5x the stop-loss distance,
+        the stop is within normal price noise and the trade should be skipped.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [symbol, direction]
+              properties:
+                symbol:
+                  type: string
+                  example: BTCUSDT
+                  description: Trading pair
+                direction:
+                  type: string
+                  enum: [LONG, SHORT]
+                  description: Trade direction
+                entryPrice:
+                  type: number
+                  description: Optional entry price (defaults to last close)
+                  example: 95000
+      responses:
+        '200':
+          description: Risk analysis result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  symbol:
+                    type: string
+                  direction:
+                    type: string
+                  entryPrice:
+                    type: number
+                  riskScore:
+                    type: integer
+                    description: Normalized risk score (0-10). >= 7 means avoid.
+                  shouldAvoid:
+                    type: boolean
+                    description: Primary decision flag. true = skip the trade.
+                  atrSlRatio:
+                    type: number
+                    description: ATR(14) / stop-loss distance. >= 2.5x means stop is noise.
+                  riskLevel:
+                    type: string
+                    enum: [LOW, MEDIUM, HIGH]
+                  isBlacklisted:
+                    type: boolean
+                  detectedPatterns:
+                    type: array
+                    items:
+                      type: object
+                  technicalSummary:
+                    type: object
+                  recommendation:
+                    type: string
+                  analyzedAt:
+                    type: string
+                    format: date-time
+                  candlesAnalyzed:
+                    type: integer
+        '400':
+          description: Missing or invalid parameters
+        '401':
+          description: Unauthorized
+
   /api/trade/validate/{symbol}:
     get:
       summary: Validate Symbol for Trading

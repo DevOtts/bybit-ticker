@@ -10,6 +10,7 @@ A lightweight Express.js API server that provides endpoints for fetching Bybit c
     - [1. Health Check](#1-health-check)
     - [2. Public Data Endpoints](#2-public-data-endpoints)
     - [3. Trading Endpoints (Authenticated)](#3-trading-endpoints-authenticated)
+        - [Risk Analyze](#risk-analyze)
         - [Validate Symbol](#validate-symbol)
         - [Get Market Data](#get-market-data)
         - [Open Position (SP20)](#open-position-sp20)
@@ -26,6 +27,7 @@ A lightweight Express.js API server that provides endpoints for fetching Bybit c
 - 🛡️ **Safety Guardrails**: Pre-flight balance checks and symbol validation.
 - 📊 **Real-time Data**: Ticker, Funding Rates, and 24h stats.
 - 📈 **Historical Data**: Klines and stop-loss simulation tools.
+- 🧠 **Risk Analyzer V3**: ATR/SL volatility filter with 14 pattern checks to gate trade execution. Prevents entries where the stop-loss is within normal price noise.
 
 ---
 
@@ -106,8 +108,73 @@ fly deploy -a bybit-ticker-fly
 ---
 
 ### 3. Trading Endpoints (Authenticated)
-**Authentication Required**: All trading endpoints require the header: 
+**Authentication Required**: All trading endpoints require the header:
 `Authorization: Bearer <TRADING_API_SECRET>`
+
+#### Risk Analyze
+Analyzes trade risk before execution using ATR/SL volatility filtering and 14 technical patterns. Returns a go/no-go decision. Call this **before** opening a position.
+
+`POST /api/trade/risk-analyze`
+```bash
+curl -X POST "http://localhost:8080/api/trade/risk-analyze" \
+     -H "Authorization: Bearer <TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "symbol": "BTCUSDT",
+           "direction": "LONG",
+           "entryPrice": 95000
+         }'
+```
+
+| Parameter    | Type   | Required | Description                                |
+|-------------|--------|----------|--------------------------------------------|
+| `symbol`    | string | Yes      | Trading pair (e.g. `BTCUSDT`)              |
+| `direction` | string | Yes      | `LONG` or `SHORT`                          |
+| `entryPrice`| number | No       | Entry price (defaults to last close price)  |
+
+**Response**:
+```json
+{
+  "symbol": "BTCUSDT",
+  "direction": "LONG",
+  "entryPrice": 95000,
+  "riskScore": 2,
+  "internalScore": 20,
+  "riskLevel": "LOW",
+  "shouldAvoid": false,
+  "atrSlRatio": 1.69,
+  "isBlacklisted": false,
+  "detectedPatterns": [],
+  "technicalSummary": {
+    "trend": "BEARISH",
+    "sma9": 95800.5,
+    "sma20": 96500.2,
+    "sma50": 97100.8,
+    "rsi14": 48.5,
+    "atr14": 1607.5,
+    "bollingerUpper": 99200.1,
+    "bollingerLower": 93800.3,
+    "macdHistogram": -120.5,
+    "distanceFromSMA20Percent": 1.56,
+    "avgVolume20": 12500,
+    "currentVolume": 9800,
+    "volumeRatio": 0.78,
+    "consecutiveCandles": 1,
+    "lastClose": 95000,
+    "lastHigh": 95800,
+    "lastLow": 94200
+  },
+  "recommendation": "✅ PROCEED. Risk score: 2/10. Conditions are favorable for this trade.",
+  "analyzedAt": "2026-02-25T15:30:00.000Z",
+  "candlesAnalyzed": 100
+}
+```
+
+**Key response fields:**
+- `shouldAvoid` — **boolean**, the primary decision flag. `true` = skip the trade.
+- `riskScore` — **0-10**, normalized risk score. >= 7 means avoid.
+- `atrSlRatio` — **float**, ATR(14) / stop-loss distance. >= 2.5x means the stop is noise.
+- `recommendation` — **string**, human-readable summary for Slack alerts.
 
 #### Validate Symbol
 Checks if a symbol is valid for Linear Perpetual trading and supports 20x leverage.
@@ -197,6 +264,37 @@ curl -X POST "http://localhost:8080/api/trade/close" \
 `GET /api/bybit/stop-sim`
 Simulates historical stop-loss hits. Useful for backtesting risk parameters.
 (See legacy docs for full params).
+
+---
+
+## Testing
+
+No test framework is required — tests are standalone Node.js scripts that call the live Bybit public API.
+
+### Risk Analyzer V3
+Validates the ATR/SL volatility filter against live market data. Tests 5 scenarios: BTC LONG (safe), BTC SHORT (schema check), ETH LONG (safe), DASH SHORT (should avoid + blacklisted), and an invalid symbol (fail-safe).
+
+```bash
+node testRiskAnalyzerV3.mjs
+```
+
+**Expected output:**
+```
+=== Risk Analyzer V3 Tests ===
+
+Test 1: BTCUSDT LONG
+  ✅ shouldAvoid is false
+  ✅ riskScore <= 4
+  ✅ atrSlRatio < 2.5
+  ...
+
+=== Results ===
+  Passed: 20
+  Failed: 0
+  Total:  20
+```
+
+> **Note:** Tests hit the live Bybit API, so ATR/SL ratios will vary with market conditions. The core assertions (BTC = safe, DASH = avoid) should remain stable due to the wide gap between their volatility profiles.
 
 ---
 
