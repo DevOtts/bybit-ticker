@@ -1,5 +1,6 @@
 import express from 'express';
 import * as tradingService from './tradingService.mjs';
+import { analyzeTradeRisk } from './riskAnalyzerService.mjs';
 
 const router = express.Router();
 
@@ -123,6 +124,32 @@ router.get('/position/:symbol', async (req, res) => {
     } catch (err) {
         console.error('Get position error:', err);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/trade/risk-analyze
+router.post('/risk-analyze', async (req, res) => {
+    try {
+        const { symbol, direction, entryPrice } = req.body;
+
+        if (!symbol || !direction) {
+            return res.status(400).json({ error: 'symbol and direction are required' });
+        }
+
+        if (!['LONG', 'SHORT'].includes(direction.toUpperCase())) {
+            return res.status(400).json({ error: 'direction must be LONG or SHORT' });
+        }
+
+        const result = await analyzeTradeRisk(
+            symbol.toUpperCase().replace('/', ''),
+            direction.toUpperCase(),
+            entryPrice || null
+        );
+
+        res.json(result);
+    } catch (err) {
+        console.error('Risk analysis error:', err);
+        res.status(500).json({ error: 'Risk analysis failed', details: err.message });
     }
 });
 
