@@ -798,6 +798,46 @@ export async function getOrdersStatus(symbol) {
         suggestedStatus
     };
 
+    // PnL calculation from filled orders
+    const entryOrder = filledOrders.find(o => o.orderType === 'Market' && !o.reduceOnly);
+    if (entryOrder) {
+        const entryPx = parseFloat(entryOrder.avgPrice);
+        const entryQty = parseFloat(entryOrder.cumExecQty);
+        const dir = entryOrder.side === 'Sell' ? 'SHORT' : 'LONG';
+
+        let grossPnl = 0;
+        const tpFills = filledOrders.filter(o => o.reduceOnly && o.orderType === 'Limit');
+        for (const tp of tpFills) {
+            const exitPrice = parseFloat(tp.avgPrice);
+            const qty = parseFloat(tp.cumExecQty);
+            grossPnl += dir === 'SHORT'
+                ? (entryPx - exitPrice) * qty
+                : (exitPrice - entryPx) * qty;
+        }
+
+        const slFill = filledOrders.find(o => o.stopOrderType === 'StopLoss' && o.orderStatus === 'Filled');
+        if (slFill) {
+            const slPrice = parseFloat(slFill.avgPrice);
+            const slQty = parseFloat(slFill.cumExecQty);
+            grossPnl += dir === 'SHORT'
+                ? (entryPx - slPrice) * slQty
+                : (slPrice - entryPx) * slQty;
+        }
+
+        const totalFees = filledOrders.reduce((sum, o) => sum + parseFloat(o.cumExecFee || 0), 0);
+        const leverage = 20;
+        const margin = (entryQty * entryPx) / leverage;
+
+        summary.pnl = {
+            gross: parseFloat(grossPnl.toFixed(4)),
+            fees: parseFloat((-totalFees).toFixed(4)),
+            net: parseFloat((grossPnl - totalFees).toFixed(4)),
+            roe: parseFloat(((grossPnl - totalFees) / margin).toFixed(4)),
+            margin: parseFloat(margin.toFixed(4)),
+            currency: 'USDT'
+        };
+    }
+
     return {
         success: true,
         symbol,

@@ -352,6 +352,29 @@ paths:
                         type: string
                         enum: [OPEN, PARTIAL, STOPPED, CLOSED]
                         description: "OPEN = nothing filled, PARTIAL = some TPs hit, STOPPED = SL triggered, CLOSED = position gone"
+                      pnl:
+                        type: object
+                        nullable: true
+                        description: "Realized PnL from filled orders. Only present when entry order is found in history."
+                        properties:
+                          gross:
+                            type: number
+                            description: "Price difference PnL (before fees)"
+                          fees:
+                            type: number
+                            description: "Total trading fees (negative value)"
+                          net:
+                            type: number
+                            description: "Net PnL (gross - fees)"
+                          roe:
+                            type: number
+                            description: "Return on equity (net / margin)"
+                          margin:
+                            type: number
+                            description: "Entry value / 20x leverage"
+                          currency:
+                            type: string
+                            example: "USDT"
         '401':
           description: Unauthorized
         '500':

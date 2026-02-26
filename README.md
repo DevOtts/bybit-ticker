@@ -291,7 +291,15 @@ curl -H "Authorization: Bearer <TOKEN>" \
       "TP2": { "status": "New", "price": "0.87786", "qty": "27" }
     },
     "tpProgress": "1/4",
-    "suggestedStatus": "PARTIAL"
+    "suggestedStatus": "PARTIAL",
+    "pnl": {
+      "gross": 0.4887,
+      "fees": -0.0484,
+      "net": 0.4403,
+      "roe": 0.0885,
+      "margin": 4.9776,
+      "currency": "USDT"
+    }
   }
 }
 ```
@@ -301,6 +309,7 @@ curl -H "Authorization: Bearer <TOKEN>" \
 - `tpProgress` — Filled TPs / Total TPs (e.g. `"1/4"`).
 - `stopLoss` — Current SL status. Sourced from orders or the position's `stopLoss` field.
 - `takeProfits` — Each TP labeled by proximity to entry price (closest = TP1).
+- `pnl` — Realized PnL computed from filled orders. Includes `gross` (price diff), `fees` (total trading fees), `net` (gross - fees), `roe` (return on equity vs margin), and `margin` (entry value / 20x leverage). Only present when the entry order is found in history.
 
 #### Close Position
 Liquidates the position at Market price and cancels all open orders (TP/SL).
