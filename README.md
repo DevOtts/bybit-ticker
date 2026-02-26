@@ -15,6 +15,7 @@ A lightweight Express.js API server that provides endpoints for fetching Bybit c
         - [Get Market Data](#get-market-data)
         - [Open Position (SP20)](#open-position-sp20)
         - [Get Position](#get-position)
+        - [Orders Status (Ground Truth)](#orders-status-ground-truth)
         - [Close Position](#close-position)
 - [Analysis & Tools](#analysis--tools)
 
@@ -244,6 +245,62 @@ Get active position details including real-time PnL and Risk metrics.
 curl -H "Authorization: Bearer <TOKEN>" \
      "http://localhost:8080/api/trade/position/BTCUSDT"
 ```
+
+#### Orders Status (Ground Truth)
+Returns the full order and position status for a symbol by querying Bybit directly. Used by the n8n Schedule workflow as the **ground truth** source, replacing candle-based stop-loss/take-profit simulation.
+
+Fetches active orders, order history (last 7 days), and current position in parallel. Classifies TP orders by price distance from entry (TP1-TP4) and computes a `suggestedStatus` (`OPEN`, `PARTIAL`, `STOPPED`, or `CLOSED`).
+
+`GET /api/trade/orders-status/:symbol`
+```bash
+curl -H "Authorization: Bearer <TOKEN>" \
+     "http://localhost:8080/api/trade/orders-status/POWERUSDT"
+```
+**Response**:
+```json
+{
+  "success": true,
+  "symbol": "POWERUSDT",
+  "timestamp": "2026-02-26T10:30:00.000Z",
+  "position": {
+    "exists": true,
+    "side": "Sell",
+    "size": "110",
+    "entryPrice": "0.90501",
+    "markPrice": "0.88200",
+    "unrealisedPnl": "2.5311",
+    "leverage": "20",
+    "liquidationPrice": "0.95026",
+    "positionStatus": "Normal"
+  },
+  "orders": {
+    "active": [{ "orderId": "...", "type": "Limit", "side": "Buy", "price": "0.85976", "qty": "29", "status": "New", "reduceOnly": true, "label": "TP4" }],
+    "filled": [{ "orderId": "...", "type": "Limit", "side": "Buy", "price": "0.88691", "qty": "27", "status": "Filled", "reduceOnly": true, "label": "TP1" }],
+    "cancelled": []
+  },
+  "summary": {
+    "hasOpenPosition": true,
+    "direction": "SHORT",
+    "totalOrders": 7,
+    "activeOrders": 4,
+    "filledOrders": 2,
+    "cancelledOrders": 0,
+    "stopLoss": { "status": "Active", "triggerPrice": "0.99551" },
+    "takeProfits": {
+      "TP1": { "status": "Filled", "price": "0.88691", "qty": "27", "filledAt": "2026-02-25T19:45:12.000Z" },
+      "TP2": { "status": "New", "price": "0.87786", "qty": "27" }
+    },
+    "tpProgress": "1/4",
+    "suggestedStatus": "PARTIAL"
+  }
+}
+```
+
+**Key response fields:**
+- `suggestedStatus` — `OPEN` (nothing filled), `PARTIAL` (some TPs hit), `STOPPED` (SL triggered, position closed), `CLOSED` (all TPs filled or position gone).
+- `tpProgress` — Filled TPs / Total TPs (e.g. `"1/4"`).
+- `stopLoss` — Current SL status. Sourced from orders or the position's `stopLoss` field.
+- `takeProfits` — Each TP labeled by proximity to entry price (closest = TP1).
 
 #### Close Position
 Liquidates the position at Market price and cancels all open orders (TP/SL).
