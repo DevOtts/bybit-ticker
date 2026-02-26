@@ -662,6 +662,245 @@ export async function getPosition(symbol) {
 }
 
 /**
+ * Gets full orders status for a symbol (ground truth for n8n workflow)
+ * Queries active orders, order history, and position in parallel
+ */
+export async function getOrdersStatus(symbol) {
+    if (!symbol) throw new Error("Missing symbol");
+
+    // Parallel fetch: active orders, order history, position
+    const [activeRes, historyRes, posRes] = await Promise.all([
+        sendRequest('/v5/order/realtime', 'GET', { category: 'linear', symbol, limit: 50 }),
+        sendRequest('/v5/order/history', 'GET', { category: 'linear', symbol, limit: 50 }),
+        sendRequest('/v5/position/list', 'GET', { category: 'linear', symbol })
+    ]);
+
+    // Parse position
+    const rawPos = posRes.result.list[0];
+    const posSize = parseFloat(rawPos?.size || '0');
+    const positionExists = rawPos && posSize > 0;
+
+    const position = positionExists ? {
+        exists: true,
+        side: rawPos.side,
+        size: rawPos.size,
+        entryPrice: rawPos.avgPrice,
+        markPrice: rawPos.markPrice,
+        unrealisedPnl: rawPos.unrealisedPnl,
+        leverage: rawPos.leverage,
+        liquidationPrice: rawPos.liqPrice,
+        positionStatus: rawPos.positionStatus || 'Normal'
+    } : { exists: false };
+
+    // Parse orders
+    const activeOrders = (activeRes.result.list || []);
+    const historyOrders = (historyRes.result.list || []);
+
+    // Categorize history orders
+    const filledOrders = historyOrders.filter(o => o.orderStatus === 'Filled');
+    const cancelledOrders = historyOrders.filter(o =>
+        o.orderStatus === 'Cancelled' || o.orderStatus === 'Deactivated'
+    );
+
+    // Format order for response
+    const formatOrder = (o) => ({
+        orderId: o.orderId,
+        type: o.orderType,
+        side: o.side,
+        price: o.price,
+        qty: o.qty,
+        ...(o.avgPrice ? { avgPrice: o.avgPrice } : {}),
+        ...(o.cumExecQty ? { cumExecQty: o.cumExecQty } : {}),
+        ...(o.cumExecFee ? { cumExecFee: o.cumExecFee } : {}),
+        status: o.orderStatus,
+        reduceOnly: o.reduceOnly,
+        createdTime: new Date(parseInt(o.createdTime)).toISOString(),
+        ...(o.updatedTime ? { updatedTime: new Date(parseInt(o.updatedTime)).toISOString() } : {}),
+        ...(o.stopOrderType ? { stopOrderType: o.stopOrderType } : {}),
+        ...(o.triggerPrice && o.triggerPrice !== '0' ? { triggerPrice: o.triggerPrice } : {})
+    });
+
+    // Merge all orders for classification
+    const allOrders = [...activeOrders, ...historyOrders];
+
+    // Determine entry price: from position if exists, otherwise from filled market order
+    let entryPrice = positionExists ? parseFloat(rawPos.avgPrice) : null;
+    if (!entryPrice) {
+        const entryOrder = filledOrders.find(o => o.orderType === 'Market' && !o.reduceOnly);
+        if (entryOrder) entryPrice = parseFloat(entryOrder.avgPrice);
+    }
+
+    // Classify TP/SL orders
+    const classified = classifyTPSLOrders(allOrders, entryPrice, rawPos);
+
+    // Add labels to formatted orders
+    const labeledActive = activeOrders.map(o => {
+        const fmt = formatOrder(o);
+        const label = classified.orderLabels[o.orderId];
+        if (label) fmt.label = label;
+        return fmt;
+    });
+
+    const labeledFilled = filledOrders.map(o => {
+        const fmt = formatOrder(o);
+        const label = classified.orderLabels[o.orderId];
+        if (label) fmt.label = label;
+        return fmt;
+    });
+
+    const labeledCancelled = cancelledOrders.map(o => {
+        const fmt = formatOrder(o);
+        const label = classified.orderLabels[o.orderId];
+        if (label) fmt.label = label;
+        return fmt;
+    });
+
+    // Determine direction
+    let direction = null;
+    if (positionExists) {
+        direction = rawPos.side === 'Buy' ? 'LONG' : 'SHORT';
+    } else {
+        const entryOrder = filledOrders.find(o => o.orderType === 'Market' && !o.reduceOnly);
+        if (entryOrder) direction = entryOrder.side === 'Buy' ? 'LONG' : 'SHORT';
+    }
+
+    // Compute suggested status
+    const suggestedStatus = determineSuggestedStatus(
+        { exists: positionExists, size: posSize },
+        filledOrders,
+        activeOrders
+    );
+
+    // TP progress
+    const filledTpCount = Object.values(classified.takeProfits).filter(tp => tp.status === 'Filled').length;
+    const totalTpCount = Object.keys(classified.takeProfits).length;
+
+    // Build summary
+    const summary = {
+        hasOpenPosition: positionExists,
+        ...(direction ? { direction } : {}),
+        totalOrders: activeOrders.length + filledOrders.length + cancelledOrders.length,
+        activeOrders: activeOrders.length,
+        filledOrders: filledOrders.length,
+        cancelledOrders: cancelledOrders.length,
+        stopLoss: classified.stopLoss
+            ? {
+                status: classified.stopLoss.status,
+                ...(classified.stopLoss.triggerPrice ? { triggerPrice: classified.stopLoss.triggerPrice } : {}),
+                ...(classified.stopLoss.price && classified.stopLoss.price !== '0' ? { price: classified.stopLoss.price } : {}),
+                orderId: classified.stopLoss.orderId
+            }
+            : (rawPos?.stopLoss && parseFloat(rawPos.stopLoss) > 0
+                ? { status: 'Active', triggerPrice: rawPos.stopLoss, source: 'position' }
+                : null),
+        takeProfits: classified.takeProfits,
+        tpProgress: `${filledTpCount}/${totalTpCount}`,
+        suggestedStatus
+    };
+
+    return {
+        success: true,
+        symbol,
+        timestamp: new Date().toISOString(),
+        position,
+        orders: {
+            active: labeledActive,
+            filled: labeledFilled,
+            cancelled: labeledCancelled
+        },
+        summary
+    };
+}
+
+/**
+ * Classify orders into TP/SL labels based on price distance from entry
+ */
+function classifyTPSLOrders(allOrders, entryPrice, rawPosition) {
+    const orderLabels = {};
+    let stopLoss = null;
+    const takeProfits = {};
+
+    // Find SL order
+    const slOrder = allOrders.find(o =>
+        o.stopOrderType === 'StopLoss' ||
+        (o.orderType === 'Market' && o.triggerPrice && o.triggerPrice !== '0' && o.reduceOnly)
+    );
+
+    if (slOrder) {
+        stopLoss = {
+            status: slOrder.orderStatus,
+            triggerPrice: slOrder.triggerPrice || slOrder.price,
+            price: slOrder.price,
+            orderId: slOrder.orderId
+        };
+        orderLabels[slOrder.orderId] = 'SL';
+    }
+
+    // Find TP orders: reduce-only limit orders
+    const tpOrders = allOrders.filter(o =>
+        o.reduceOnly === true && o.orderType === 'Limit'
+    );
+
+    if (entryPrice && tpOrders.length > 0) {
+        // Sort by distance from entry (closest = TP1)
+        const sorted = [...tpOrders].sort((a, b) => {
+            const distA = Math.abs(parseFloat(a.price) - entryPrice);
+            const distB = Math.abs(parseFloat(b.price) - entryPrice);
+            return distA - distB;
+        });
+
+        // Deduplicate by orderId (order may appear in both active and history)
+        const seen = new Set();
+        sorted.forEach((o) => {
+            if (seen.has(o.orderId)) return;
+            seen.add(o.orderId);
+
+            const idx = seen.size;
+            const label = `TP${idx}`;
+            orderLabels[o.orderId] = label;
+
+            takeProfits[label] = {
+                status: o.orderStatus,
+                price: o.price,
+                qty: o.orderStatus === 'Filled' ? (o.cumExecQty || o.qty) : o.qty,
+                orderId: o.orderId,
+                ...(o.orderStatus === 'Filled' && o.updatedTime
+                    ? { filledAt: new Date(parseInt(o.updatedTime)).toISOString() }
+                    : {})
+            };
+        });
+    }
+
+    return { stopLoss, takeProfits, orderLabels };
+}
+
+/**
+ * Determine suggested trade status based on position and order state
+ */
+function determineSuggestedStatus(position, filledOrders, activeOrders) {
+    // No position = fully resolved
+    if (!position.exists || position.size === 0) {
+        const slFilled = filledOrders.some(o =>
+            o.stopOrderType === 'StopLoss' ||
+            (o.orderType === 'Market' && o.triggerPrice && o.triggerPrice !== '0' && o.reduceOnly)
+        );
+        if (slFilled) return 'STOPPED';
+
+        const tpsFilled = filledOrders.filter(o => o.reduceOnly && o.orderType === 'Limit');
+        if (tpsFilled.length > 0) return 'CLOSED';
+
+        return 'CLOSED';
+    }
+
+    // Position exists — check if any TPs filled
+    const tpsFilled = filledOrders.filter(o => o.reduceOnly && o.orderType === 'Limit');
+    if (tpsFilled.length > 0) return 'PARTIAL';
+
+    // Position exists, nothing filled yet
+    return 'OPEN';
+}
+
+/**
  * Helper to count decimals for toFixed
  */
 function getPrecision(step) {

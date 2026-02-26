@@ -127,6 +127,18 @@ router.get('/position/:symbol', async (req, res) => {
     }
 });
 
+// GET /api/trade/orders-status/:symbol
+router.get('/orders-status/:symbol', async (req, res) => {
+    try {
+        const symbol = req.params.symbol.toUpperCase().replace('/', '');
+        const result = await tradingService.getOrdersStatus(symbol);
+        res.json(result);
+    } catch (err) {
+        console.error('Orders status error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // POST /api/trade/risk-analyze
 router.post('/risk-analyze', async (req, res) => {
     try {

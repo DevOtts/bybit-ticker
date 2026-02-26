@@ -252,6 +252,121 @@ paths:
         '200':
           description: Position details and PnL
 
+  /api/trade/orders-status/{symbol}:
+    get:
+      summary: Get Orders Status (Ground Truth)
+      description: |
+        Returns the full order and position status for a symbol by querying Bybit directly.
+        Used by the n8n Schedule workflow as the **ground truth** source, replacing candle-based simulation.
+
+        Fetches active orders, order history (last 7 days), and current position in parallel.
+        Classifies TP orders by price distance from entry (TP1-TP4) and computes a `suggestedStatus`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: symbol
+          required: true
+          schema:
+            type: string
+          description: Trading symbol (e.g. POWERUSDT)
+      responses:
+        '200':
+          description: Full orders and position status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  symbol:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  position:
+                    type: object
+                    properties:
+                      exists:
+                        type: boolean
+                      side:
+                        type: string
+                        enum: [Buy, Sell]
+                      size:
+                        type: string
+                      entryPrice:
+                        type: string
+                      markPrice:
+                        type: string
+                      unrealisedPnl:
+                        type: string
+                      leverage:
+                        type: string
+                      liquidationPrice:
+                        type: string
+                      positionStatus:
+                        type: string
+                  orders:
+                    type: object
+                    properties:
+                      active:
+                        type: array
+                        items:
+                          type: object
+                      filled:
+                        type: array
+                        items:
+                          type: object
+                      cancelled:
+                        type: array
+                        items:
+                          type: object
+                  summary:
+                    type: object
+                    properties:
+                      hasOpenPosition:
+                        type: boolean
+                      direction:
+                        type: string
+                        enum: [LONG, SHORT]
+                      totalOrders:
+                        type: integer
+                      activeOrders:
+                        type: integer
+                      filledOrders:
+                        type: integer
+                      cancelledOrders:
+                        type: integer
+                      stopLoss:
+                        type: object
+                        nullable: true
+                      takeProfits:
+                        type: object
+                        description: "TP1-TP4 keyed by label, sorted by distance from entry"
+                      tpProgress:
+                        type: string
+                        description: "Filled TPs / Total TPs (e.g. '1/4')"
+                        example: "1/4"
+                      suggestedStatus:
+                        type: string
+                        enum: [OPEN, PARTIAL, STOPPED, CLOSED]
+                        description: "OPEN = nothing filled, PARTIAL = some TPs hit, STOPPED = SL triggered, CLOSED = position gone"
+        '401':
+          description: Unauthorized
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  error:
+                    type: string
+
   /api/trade/open:
     post:
       summary: Open Position (SP20 Strategy)
