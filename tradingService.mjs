@@ -128,16 +128,17 @@ export async function waitForFill(orderId, symbol, timeoutMs = 5000) {
 /**
  * Set Trading Stop (Stop Loss / Take Profit)
  */
-export async function setTradingStop(symbol, stopLoss, takeProfit, positionIdx = 0) {
+export async function setTradingStop(symbol, stopLoss, takeProfit, positionIdx = 0, slSize = null) {
     const params = {
         category: 'linear',
         symbol,
         positionIdx,
-        tpslMode: 'Full', // Entire position
+        tpslMode: 'Partial',
     };
 
     if (stopLoss) params.stopLoss = stopLoss;
     if (takeProfit) params.takeProfit = takeProfit;
+    if (slSize) params.slSize = String(slSize);
 
     return await sendRequest('/v5/position/trading-stop', 'POST', params);
 }
@@ -322,10 +323,10 @@ function roundToStep(quantity, qtyStep) {
 
 /**
  * Opens a position with Enhanced Logic (8 Steps)
- * Default StopLoss= 20%
+ * Default StopLoss= 10% (wide catastrophic stop; tightened to 1% after TP1 via reapply-sl)
  * @param {object} params - { symbol, direction, leverage, margin }
  */
-export async function openPosition({ symbol, direction, leverage = 20, margin, slDist = 0.2 }) {
+export async function openPosition({ symbol, direction, leverage = 20, margin, slDist = 0.1 }) {
     // STEP 0: Check Wallet Balance
     // We strictly use USDT for settlements in Linear perps.
     // We add a conservative 1% buffer for opening fees/market slippage.
@@ -403,7 +404,7 @@ export async function openPosition({ symbol, direction, leverage = 20, margin, s
     const slPrice = roundToTick(slPriceRaw, tickSize);
     const slPriceStr = slPrice.toFixed(pricePrecision);
 
-    await setTradingStop(symbol, slPriceStr, null, 0);
+    await setTradingStop(symbol, slPriceStr, null, 0, qtyStr);
 
     // STEP 7: Place TP limit orders
     // We aim for 4 split TPs (2%, 3%, 4%, 5%).
@@ -505,7 +506,7 @@ export async function openPosition({ symbol, direction, leverage = 20, margin, s
                 stopLoss: {
                     price: slPriceStr,
                     status: 'Active',
-                    distance: '1%'
+                    distance: `${(slDist * 100).toFixed(0)}%`
                 },
                 takeProfits: tpOrders
             }
@@ -849,6 +850,104 @@ export async function getOrdersStatus(symbol) {
             cancelled: labeledCancelled
         },
         summary
+    };
+}
+
+/**
+ * Re-apply or tighten stop loss on an open position.
+ *
+ * Strategy:
+ *  - Entry: wide 10% SL (catastrophic safety net, set by openPosition)
+ *  - After TP1 fills: tighten to 1% SL on remaining position (called with tighten=true)
+ *
+ * Behavior:
+ *  - tighten=false (default): only applies SL if NONE exists (defense in depth)
+ *  - tighten=true: replaces existing SL with a tighter one at slDist (1%)
+ *
+ * @param {string} symbol
+ * @param {number} slDist - SL distance as decimal (default 0.01 = 1%)
+ * @param {boolean} tighten - If true, replace existing SL with tighter one
+ */
+export async function reapplyStopLoss(symbol, slDist = 0.01, tighten = false) {
+    if (!symbol) throw new Error("Missing symbol");
+
+    // Get position and active orders in parallel
+    const [posRes, ordersRes] = await Promise.all([
+        sendRequest('/v5/position/list', 'GET', { category: 'linear', symbol }),
+        sendRequest('/v5/order/realtime', 'GET', { category: 'linear', symbol, limit: 50 })
+    ]);
+
+    const pos = posRes.result.list[0];
+    const posSize = parseFloat(pos?.size || '0');
+
+    if (!pos || posSize === 0) {
+        return { success: true, action: 'skipped', reason: 'No open position' };
+    }
+
+    // Check if SL is already active
+    const hasSLOnPosition = pos.stopLoss && parseFloat(pos.stopLoss) > 0;
+    const activeOrders = ordersRes.result.list || [];
+    const activeSLOrder = activeOrders.find(o =>
+        o.stopOrderType === 'StopLoss' &&
+        (o.orderStatus === 'New' || o.orderStatus === 'Untriggered')
+    );
+    const hasSLOrder = !!activeSLOrder;
+    const currentSL = hasSLOnPosition ? pos.stopLoss : activeSLOrder?.triggerPrice;
+
+    // If SL exists and we're NOT tightening, skip
+    if ((hasSLOnPosition || hasSLOrder) && !tighten) {
+        return {
+            success: true,
+            action: 'skipped',
+            reason: 'SL already active (use tighten=true to replace)',
+            currentSL
+        };
+    }
+
+    // Calculate new SL price
+    const entryPrice = parseFloat(pos.avgPrice);
+    const direction = pos.side === 'Buy' ? 'LONG' : 'SHORT';
+
+    const slPriceRaw = direction === 'LONG'
+        ? entryPrice * (1 - slDist)
+        : entryPrice * (1 + slDist);
+
+    // Get instrument info for tick size
+    const validation = await validateSymbol(symbol);
+    const tickSize = validation.orderSizing.tickSize;
+    const pricePrecision = getPrecision(tickSize);
+    const qtyStep = validation.orderSizing.qtyStep;
+    const qtyPrecision = getPrecision(qtyStep);
+
+    const slPrice = roundToTick(slPriceRaw, tickSize);
+    const slPriceStr = slPrice.toFixed(pricePrecision);
+    const slSizeStr = posSize.toFixed(qtyPrecision);
+
+    // If tightening, cancel existing SL order first (if it's an order, not position-level)
+    if (tighten && activeSLOrder) {
+        try {
+            await sendRequest('/v5/order/cancel', 'POST', {
+                category: 'linear',
+                symbol,
+                orderId: activeSLOrder.orderId
+            });
+        } catch (err) {
+            console.warn(`[reapplyStopLoss] Failed to cancel old SL order: ${err.message}`);
+        }
+    }
+
+    await setTradingStop(symbol, slPriceStr, null, 0, slSizeStr);
+
+    return {
+        success: true,
+        action: tighten ? 'tightened' : 'reapplied',
+        symbol,
+        direction,
+        entryPrice: pos.avgPrice,
+        positionSize: pos.size,
+        previousSL: currentSL || null,
+        newStopLoss: slPriceStr,
+        slDistance: `${(slDist * 100).toFixed(1)}%`
     };
 }
 

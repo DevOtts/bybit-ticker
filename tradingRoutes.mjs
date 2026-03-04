@@ -139,6 +139,27 @@ router.get('/orders-status/:symbol', async (req, res) => {
     }
 });
 
+// POST /api/trade/reapply-sl
+// Body: { symbol, slDist?, tighten? }
+// tighten=true → replaces existing SL with tighter one (used after TP fills)
+router.post('/reapply-sl', async (req, res) => {
+    try {
+        const { symbol, slDist, tighten } = req.body;
+        if (!symbol) {
+            return res.status(400).json({ error: 'symbol is required' });
+        }
+        const result = await tradingService.reapplyStopLoss(
+            symbol.toUpperCase().replace('/', ''),
+            slDist || undefined,
+            tighten === true
+        );
+        res.json(result);
+    } catch (err) {
+        console.error('Reapply SL error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // POST /api/trade/risk-analyze
 router.post('/risk-analyze', async (req, res) => {
     try {
